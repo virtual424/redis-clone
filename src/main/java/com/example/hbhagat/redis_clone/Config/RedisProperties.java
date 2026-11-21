@@ -30,5 +30,9 @@ public class RedisProperties {
 	 */
 	private String evictionStrategy = "allkeys-random";
 
-	private String AOFFile = "appendonly.aof";
+	/*
+	 * Path of the append-only file. Relative paths resolve
+	 * against the working directory.
+	 */
+	private String aofFile = "appendonly.aof";
 }

@@ -125,7 +125,16 @@ public final class SET implements CommandHandler {
 
 			store.put(key, object);
 
-			mutations.add(command);
+			/*
+			 * Log the plain SET, then the deadline as an
+			 * absolute time. Logging "EX 10" would restart
+			 * the 10 seconds every time the AOF is replayed.
+			 */
+			mutations.add(RedisCommand.ofBytes("SET", args.get(0).value(), value));
+
+			if (object.hasExpiration()) {
+				mutations.add(RedisCommand.of("PEXPIREAT", key, String.valueOf(object.getExpiresAt())));
+			}
 
 			return new Mutation(mutations);
 		});

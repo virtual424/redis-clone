@@ -63,6 +63,13 @@ public final class AppendOnlyFileManager {
 	 * Rewrite is intentionally performed on a single
 	 * background thread.
 	 */
+	/*
+	 * True while the AOF is being replayed at startup.
+	 * Replayed commands change memory but must not be
+	 * appended to the file a second time.
+	 */
+	private volatile boolean loading = false;
+
 	private final ExecutorService rewriteExecutor = Executors.newSingleThreadExecutor(runnable -> {
 		Thread thread = new Thread(runnable, "aof-rewrite");
 
@@ -116,7 +123,7 @@ public final class AppendOnlyFileManager {
 	 * is held.
 	 */
 	private void appendMutationInternal(Mutation mutation) {
-		if (mutation == null || mutation.isEmpty()) {
+		if (mutation == null || mutation.isEmpty() || loading) {
 			return;
 		}
 
@@ -149,7 +156,7 @@ public final class AppendOnlyFileManager {
 			return;
 		}
 
-		Path aofPath = Path.of(properties.getAOFFile());
+		Path aofPath = Path.of(properties.getAofFile());
 
 		try {
 			Path parent = aofPath.toAbsolutePath().getParent();
@@ -205,6 +212,21 @@ public final class AppendOnlyFileManager {
 	}
 
 	/**
+	 * Called by AofLoader around the startup replay.
+	 */
+	public void beginLoading() {
+		loading = true;
+	}
+
+	public void endLoading() {
+		loading = false;
+	}
+
+	public boolean isLoading() {
+		return loading;
+	}
+
+	/**
 	 * Starts a background AOF rewrite.
 	 *
 	 * If a rewrite is already running, this call is ignored.
@@ -247,8 +269,6 @@ public final class AppendOnlyFileManager {
 	private List<RedisCommand> snapshotStore() {
 		List<RedisCommand> snapshot = new ArrayList<>();
 
-		long now = System.currentTimeMillis();
-
 		for (var entry : store.entriesSnapshot()) {
 			String key = entry.getKey();
 
@@ -268,34 +288,16 @@ public final class AppendOnlyFileManager {
 
 			byte[] value = object.copyValue();
 
-			/*
-			 * Key without expiration.
-			 */
-			if (!object.hasExpiration()) {
-				snapshot.add(RedisCommand.ofMixed("SET", key, value));
+			snapshot.add(RedisCommand.ofMixed("SET", key, value));
 
-				continue;
+			/*
+			 * Expiry is stored as an absolute Unix time in
+			 * milliseconds, so a key keeps its real deadline
+			 * no matter when the AOF is replayed.
+			 */
+			if (object.hasExpiration()) {
+				snapshot.add(RedisCommand.of("PEXPIREAT", key, String.valueOf(object.getExpiresAt())));
 			}
-
-			/*
-			 * Key has expiration.
-			 */
-			long ttlMs = object.getExpiresAt() - now;
-
-			if (ttlMs <= 0) {
-				continue;
-			}
-
-			/*
-			 * SET EX works in seconds.
-			 *
-			 * Round upward so a key with a small
-			 * remaining TTL does not immediately
-			 * expire during AOF replay.
-			 */
-			long ttlSeconds = Math.max(1L, (ttlMs + 999L) / 1000L);
-
-			snapshot.add(RedisCommand.ofMixed("SET", key, value, "EX", String.valueOf(ttlSeconds)));
 		}
 
 		return snapshot;
@@ -305,9 +307,9 @@ public final class AppendOnlyFileManager {
 	 * Performs the actual background rewrite.
 	 */
 	private void performRewrite(List<RedisCommand> snapshot) {
-		Path target = Path.of(properties.getAOFFile());
+		Path target = Path.of(properties.getAofFile());
 
-		Path temp = Path.of(properties.getAOFFile() + ".rewrite");
+		Path temp = Path.of(properties.getAofFile() + ".rewrite");
 
 		try {
 			Files.deleteIfExists(temp);

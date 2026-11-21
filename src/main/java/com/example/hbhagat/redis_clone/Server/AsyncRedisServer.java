@@ -3,6 +3,7 @@ package com.example.hbhagat.redis_clone.Server;
 import com.example.hbhagat.redis_clone.Command.CommandDispatcher;
 import com.example.hbhagat.redis_clone.Command.RedisCommand;
 import com.example.hbhagat.redis_clone.Config.RedisProperties;
+import com.example.hbhagat.redis_clone.Storage.Persistence.AofLoader;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.channels.SelectionKey;
@@ -32,6 +33,8 @@ public final class AsyncRedisServer implements CommandLineRunner {
 
 	private final ServerLifecycle lifecycle;
 
+	private final AofLoader aofLoader;
+
 	private final Map<SocketChannel, ClientConnection> clients = new ConcurrentHashMap<>();
 
 	private final ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
@@ -51,6 +54,12 @@ public final class AsyncRedisServer implements CommandLineRunner {
 
 	private volatile boolean started = false;
 
+	/*
+	 * Port actually bound; differs from the configured port
+	 * when port 0 (any free port) is used, e.g. in tests.
+	 */
+	private volatile int boundPort = -1;
+
 	/**
 	 * Starts the asynchronous Redis TCP server.
 	 */
@@ -67,6 +76,12 @@ public final class AsyncRedisServer implements CommandLineRunner {
 			"Starting asynchronous TCP server on " + redisProperties.getHost() + ":" + redisProperties.getPort()
 		);
 
+		/*
+		 * Rebuild the keyspace from the AOF before accepting
+		 * clients, so nobody reads a half-loaded state.
+		 */
+		aofLoader.load();
+
 		try (ServerSocketChannel server = ServerSocketChannel.open(); Selector openedSelector = Selector.open()) {
 			this.serverChannel = server;
 			this.selector = openedSelector;
@@ -75,6 +90,8 @@ public final class AsyncRedisServer implements CommandLineRunner {
 			 * Bind TCP server.
 			 */
 			server.bind(new InetSocketAddress(redisProperties.getHost(), redisProperties.getPort()));
+
+			boundPort = ((InetSocketAddress) server.getLocalAddress()).getPort();
 
 			/*
 			 * Non-blocking server socket.
@@ -97,6 +114,7 @@ public final class AsyncRedisServer implements CommandLineRunner {
 
 			this.serverChannel = null;
 			this.selector = null;
+			this.boundPort = -1;
 
 			synchronized (this) {
 				started = false;
@@ -359,6 +377,13 @@ public final class AsyncRedisServer implements CommandLineRunner {
 		}
 
 		clients.clear();
+	}
+
+	/**
+	 * The listening port, or -1 when the server is not running.
+	 */
+	public int port() {
+		return boundPort;
 	}
 
 	/**

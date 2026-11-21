@@ -76,7 +76,12 @@ public final class EXPIRE implements CommandHandler {
 
 			result[0] = 1;
 
-			return new Mutation(java.util.List.of(command));
+			/*
+			 * Persist the absolute deadline, not the relative
+			 * seconds, so replaying the AOF later does not
+			 * extend the key's life.
+			 */
+			return new Mutation(java.util.List.of(RedisCommand.of("PEXPIREAT", key, String.valueOf(expiresAt))));
 		});
 
 		return new RespInteger(result[0]).encode();

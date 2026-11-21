@@ -124,7 +124,12 @@ public class CommandReader {
 		}
 	}
 
-	private RedisCommand toCommand(RespArray array) throws IOException {
+	/**
+	 * Converts a decoded RESP array into a command.
+	 *
+	 * Also used when replaying the AOF.
+	 */
+	public static RedisCommand toCommand(RespArray array) throws IOException {
 		List<RespValue> values = array.values();
 
 		if (values.isEmpty()) {
