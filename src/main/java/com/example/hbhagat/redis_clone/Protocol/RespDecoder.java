@@ -10,33 +10,94 @@ public final class RespDecoder {
 
 	private RespDecoder() {}
 
-	public static List<RespArray> decode(byte[] data) throws IOException {
-		Cursor cursor = new Cursor(data);
+	/**
+	 * Result of decoding as many complete commands as the
+	 * buffer currently holds.
+	 *
+	 * consumed = number of bytes that belong to the complete
+	 * commands. Bytes after it are the start of a command
+	 * whose remaining bytes have not arrived yet.
+	 */
+	public record DecodeResult(List<RespArray> commands, int consumed) {}
+
+	/**
+	 * Thrown when the buffer ends in the middle of a frame.
+	 *
+	 * This is not a protocol error: TCP is a byte stream, so a
+	 * command can arrive split across several reads. The caller
+	 * keeps the bytes and tries again after the next read.
+	 */
+	static final class IncompleteFrameException extends IOException {
+
+		IncompleteFrameException(String message) {
+			super(message);
+		}
+	}
+
+	/**
+	 * Decodes every complete command in data[0, length).
+	 *
+	 * A partial command at the end is left unconsumed instead
+	 * of being treated as an error. Malformed input still
+	 * throws IOException.
+	 */
+	public static DecodeResult decodeAvailable(byte[] data, int length) throws IOException {
+		Cursor cursor = new Cursor(data, length);
 
 		List<RespArray> commands = new ArrayList<>();
+
+		int consumed = 0;
 
 		while (true) {
 			skipCRLF(cursor);
 
 			if (!cursor.hasRemaining()) {
+				consumed = cursor.position();
+
 				break;
 			}
 
-			RespValue value = decodeValue(cursor);
+			int frameStart = cursor.position();
 
-			if (!(value instanceof RespArray array)) {
-				throw new IOException("Expected RESP Array");
+			try {
+				RespValue value = decodeValue(cursor);
+
+				if (!(value instanceof RespArray array)) {
+					throw new IOException("Expected RESP Array");
+				}
+
+				commands.add(array);
+
+				consumed = cursor.position();
+			} catch (IncompleteFrameException e) {
+				/*
+				 * Wait for the rest of this frame.
+				 */
+				consumed = frameStart;
+
+				break;
 			}
-
-			commands.add(array);
 		}
 
-		return commands;
+		return new DecodeResult(commands, consumed);
+	}
+
+	/**
+	 * Decodes a buffer that must contain only complete commands.
+	 */
+	public static List<RespArray> decode(byte[] data) throws IOException {
+		DecodeResult result = decodeAvailable(data, data.length);
+
+		if (result.consumed() != data.length) {
+			throw new IOException("Incomplete RESP frame");
+		}
+
+		return result.commands();
 	}
 
 	private static RespValue decodeValue(Cursor cursor) throws IOException {
 		if (!cursor.hasRemaining()) {
-			throw new IOException("Unexpected End Of Stream");
+			throw new IncompleteFrameException("Unexpected End Of Stream");
 		}
 
 		byte type = cursor.read();
@@ -76,8 +137,12 @@ public final class RespDecoder {
 			return new RespBulkString(null);
 		}
 
-		if (cursor.remaining() < length + 2) {
-			throw new IOException("Incomplete Bulk String");
+		if (length < -1) {
+			throw new IOException("Invalid Bulk String length: " + length);
+		}
+
+		if (cursor.remaining() < (long) length + 2) {
+			throw new IncompleteFrameException("Incomplete Bulk String");
 		}
 
 		byte[] bytes = Arrays.copyOfRange(cursor.data(), cursor.position(), cursor.position() + length);
@@ -92,7 +157,15 @@ public final class RespDecoder {
 	private static RespArray readArray(Cursor cursor) throws IOException {
 		int count = readLength(cursor);
 
-		List<RespValue> values = new ArrayList<>(count);
+		if (count < -1) {
+			throw new IOException("Invalid Array length: " + count);
+		}
+
+		/*
+		 * Do not trust the declared count for pre-sizing:
+		 * a client could announce a huge array.
+		 */
+		List<RespValue> values = new ArrayList<>(Math.max(0, Math.min(count, 1024)));
 
 		for (int i = 0; i < count; i++) {
 			values.add(decodeValue(cursor));
@@ -104,7 +177,11 @@ public final class RespDecoder {
 	private static int readLength(Cursor cursor) throws IOException {
 		byte[] bytes = readLine(cursor);
 
-		return Integer.parseInt(new String(bytes, StandardCharsets.UTF_8));
+		try {
+			return Integer.parseInt(new String(bytes, StandardCharsets.UTF_8));
+		} catch (NumberFormatException e) {
+			throw new IOException("Invalid length: " + new String(bytes, StandardCharsets.UTF_8));
+		}
 	}
 
 	private static byte[] readLine(Cursor cursor) throws IOException {
@@ -122,12 +199,12 @@ public final class RespDecoder {
 			cursor.skip();
 		}
 
-		throw new IOException("Unexpected End Of Stream");
+		throw new IncompleteFrameException("Unexpected End Of Stream");
 	}
 
 	private static void expectCRLF(Cursor cursor) throws IOException {
 		if (cursor.remaining() < 2) {
-			throw new IOException("Missing CRLF");
+			throw new IncompleteFrameException("Missing CRLF");
 		}
 
 		if (cursor.read() != '\r') {
@@ -155,10 +232,16 @@ public final class RespDecoder {
 
 		private final byte[] data;
 
+		/*
+		 * Bytes at index >= limit are not part of the input.
+		 */
+		private final int limit;
+
 		private int position;
 
-		Cursor(byte[] data) {
+		Cursor(byte[] data, int limit) {
 			this.data = data;
+			this.limit = limit;
 		}
 
 		byte read() {
@@ -182,7 +265,7 @@ public final class RespDecoder {
 		}
 
 		int remaining() {
-			return data.length - position;
+			return limit - position;
 		}
 
 		boolean hasRemaining() {
