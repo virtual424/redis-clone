@@ -3,9 +3,12 @@ package com.example.hbhagat.redis_clone.Server;
 import com.example.hbhagat.redis_clone.Command.CommandDispatcher;
 import com.example.hbhagat.redis_clone.Command.RedisCommand;
 import com.example.hbhagat.redis_clone.Config.RedisProperties;
+import com.example.hbhagat.redis_clone.Storage.Mutation.MutationCoordinator;
 import com.example.hbhagat.redis_clone.Storage.Persistence.AofLoader;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
@@ -34,6 +37,8 @@ public final class AsyncRedisServer implements CommandLineRunner {
 	private final ServerLifecycle lifecycle;
 
 	private final AofLoader aofLoader;
+
+	private final MutationCoordinator mutationCoordinator;
 
 	private final Map<SocketChannel, ClientConnection> clients = new ConcurrentHashMap<>();
 
@@ -251,6 +256,20 @@ public final class AsyncRedisServer implements CommandLineRunner {
 			return;
 		}
 
+		/*
+		 * maxclients: refuse politely instead of letting
+		 * connections grow without limit.
+		 */
+		if (clients.size() >= redisProperties.getMaxClients()) {
+			client.write(
+				ByteBuffer.wrap("-ERR max number of clients reached\r\n".getBytes(StandardCharsets.US_ASCII))
+			);
+
+			client.close();
+
+			return;
+		}
+
 		client.configureBlocking(false);
 
 		ClientConnection connection = new ClientConnection(client);
@@ -303,7 +322,7 @@ public final class AsyncRedisServer implements CommandLineRunner {
 				 * EXEC
 				 */
 			} else if ("EXEC".equals(commandName)) {
-				response = connection.executeTransaction(command, commandDispatcher);
+				response = connection.executeTransaction(command, commandDispatcher, mutationCoordinator);
 				/*
 				 * DISCARD
 				 */

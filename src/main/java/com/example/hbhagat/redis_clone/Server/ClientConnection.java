@@ -4,6 +4,7 @@ import com.example.hbhagat.redis_clone.Command.CommandDispatcher;
 import com.example.hbhagat.redis_clone.Command.RedisCommand;
 import com.example.hbhagat.redis_clone.Protocol.CommandReader;
 import com.example.hbhagat.redis_clone.Protocol.RespSimpleString;
+import com.example.hbhagat.redis_clone.Storage.Mutation.MutationCoordinator;
 import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,7 +73,7 @@ public final class ClientConnection {
 		return new RespSimpleString("QUEUED").encode();
 	}
 
-	public byte[] executeTransaction(RedisCommand command, CommandDispatcher dispatcher) {
+	public byte[] executeTransaction(RedisCommand command, CommandDispatcher dispatcher, MutationCoordinator coordinator) {
 		if (command.size() != 0) {
 			return error("ERR wrong number of arguments for 'exec' command");
 		}
@@ -97,21 +98,29 @@ public final class ClientConnection {
 		 * <response 2>
 		 * ...
 		 */
-		StringBuilder response = new StringBuilder();
+		/*
+		 * Run all queued commands while holding the mutation
+		 * lock, so background expiry cannot delete a key in the
+		 * middle of the transaction. The event loop is single
+		 * threaded, so other clients cannot interleave anyway.
+		 */
+		return coordinator.runExclusively(() -> {
+			java.io.ByteArrayOutputStream response = new java.io.ByteArrayOutputStream();
 
-		response.append('*').append(commands.size()).append("\r\n");
+			response.writeBytes(("*" + commands.size() + "\r\n").getBytes(java.nio.charset.StandardCharsets.US_ASCII));
 
-		for (RedisCommand queuedCommand : commands) {
-			byte[] commandResponse = dispatcher.dispatch(queuedCommand);
+			for (RedisCommand queuedCommand : commands) {
+				byte[] commandResponse = dispatcher.dispatch(queuedCommand);
 
-			if (commandResponse == null) {
-				continue;
+				if (commandResponse == null) {
+					continue;
+				}
+
+				response.writeBytes(commandResponse);
 			}
 
-			response.append(new String(commandResponse, java.nio.charset.StandardCharsets.ISO_8859_1));
-		}
-
-		return response.toString().getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+			return response.toByteArray();
+		});
 	}
 
 	public byte[] discardTransaction(RedisCommand command) {

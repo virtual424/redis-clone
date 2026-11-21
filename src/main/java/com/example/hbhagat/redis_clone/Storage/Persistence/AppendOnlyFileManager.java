@@ -117,6 +117,24 @@ public final class AppendOnlyFileManager {
 	}
 
 	/**
+	 * Runs work while holding the mutation lock, so no other
+	 * mutation (background expiry, AOF rewrite cut-over) can
+	 * interleave with it. Used to make MULTI/EXEC atomic.
+	 *
+	 * The lock is reentrant: mutations inside the work take
+	 * it again without blocking.
+	 */
+	public <T> T runExclusively(Supplier<T> work) {
+		mutationLock.lock();
+
+		try {
+			return work.get();
+		} finally {
+			mutationLock.unlock();
+		}
+	}
+
+	/**
 	 * Persists a mutation to the active AOF.
 	 *
 	 * This method MUST only be called while mutationLock

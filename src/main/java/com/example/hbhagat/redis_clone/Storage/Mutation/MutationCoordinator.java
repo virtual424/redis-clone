@@ -28,4 +28,12 @@ public final class MutationCoordinator {
 
 		return aofManager.executeMutation(mutationSupplier);
 	}
+
+	/**
+	 * Runs several commands as one unit: no background
+	 * mutation can run in between. Used by EXEC.
+	 */
+	public <T> T runExclusively(Supplier<T> work) {
+		return aofManager.runExclusively(work);
+	}
 }

@@ -31,6 +31,12 @@ public class RedisProperties {
 	private String evictionStrategy = "allkeys-random";
 
 	/*
+	 * How often active expiry runs. Redis runs it 10 times
+	 * per second (hz 10).
+	 */
+	private long activeExpireIntervalMs = 100;
+
+	/*
 	 * Path of the append-only file. Relative paths resolve
 	 * against the working directory.
 	 */

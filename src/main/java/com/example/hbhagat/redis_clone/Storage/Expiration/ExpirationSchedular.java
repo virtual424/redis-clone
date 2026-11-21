@@ -10,7 +10,10 @@ public class ExpirationSchedular {
 
 	private final ExpirationManager expirationManager;
 
-	@Scheduled(fixedRate = 1000 * 60)
+	/*
+	 * Default 100 ms: 10 cycles per second, like Redis.
+	 */
+	@Scheduled(fixedDelayString = "${redis.active-expire-interval-ms:100}")
 	public void run() {
 		expirationManager.deleteExpiredKeys();
 	}

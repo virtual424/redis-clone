@@ -5,12 +5,19 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import com.example.hbhagat.redis_clone.Storage.Expiration.VolatileKeyIndex;
 import org.springframework.stereotype.Component;
 
 @Component
 public final class RedisStore {
 
 	private final Map<String, RedisObject> store = new ConcurrentHashMap<>();
+
+	/*
+	 * Keys that have a TTL, kept separately (like Redis's
+	 * "expires" dictionary) so active expiry can sample them.
+	 */
+	private final VolatileKeyIndex volatileKeys = new VolatileKeyIndex();
 
 	public RedisObject newObject(byte[] value, long durationMs) {
 		return RedisObjectFactory.create(value, durationMs);
@@ -32,6 +39,41 @@ public final class RedisStore {
 		object.touch();
 
 		store.put(key, object);
+
+		if (object.hasExpiration()) {
+			volatileKeys.add(key);
+		} else {
+			volatileKeys.remove(key);
+		}
+	}
+
+	/**
+	 * Sets an absolute expiry on an existing key and makes it
+	 * visible to active expiry.
+	 */
+	public void setExpiration(String key, RedisObject object, long expiresAt) {
+		object.setExpiration(expiresAt);
+
+		volatileKeys.add(key);
+	}
+
+	/**
+	 * Random keys that have a TTL, for active expiry.
+	 */
+	public List<String> sampleVolatileKeys(int count) {
+		return volatileKeys.sample(count);
+	}
+
+	/**
+	 * Drops a key from the TTL index when it no longer has a
+	 * TTL (stale entry found while sampling).
+	 */
+	public void forgetVolatile(String key) {
+		volatileKeys.remove(key);
+	}
+
+	public int volatileKeyCount() {
+		return volatileKeys.size();
 	}
 
 	/**
@@ -59,7 +101,9 @@ public final class RedisStore {
 		}
 
 		if (object.isExpired()) {
-			store.remove(key, object);
+			if (store.remove(key, object)) {
+				volatileKeys.remove(key);
+			}
 
 			return null;
 		}
@@ -70,7 +114,13 @@ public final class RedisStore {
 	}
 
 	public boolean delete(String key) {
-		return store.remove(key) != null;
+		boolean removed = store.remove(key) != null;
+
+		if (removed) {
+			volatileKeys.remove(key);
+		}
+
+		return removed;
 	}
 
 	/**
@@ -84,7 +134,13 @@ public final class RedisStore {
 			return false;
 		}
 
-		return store.remove(key, expected);
+		boolean removed = store.remove(key, expected);
+
+		if (removed) {
+			volatileKeys.remove(key);
+		}
+
+		return removed;
 	}
 
 	public boolean contains(String key) {

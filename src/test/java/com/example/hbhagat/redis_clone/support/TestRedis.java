@@ -25,12 +25,14 @@ import com.example.hbhagat.redis_clone.Storage.Eviction.AllKeysLruEvictionPolicy
 import com.example.hbhagat.redis_clone.Storage.Eviction.AllKeysRandomEvictionPolicy;
 import com.example.hbhagat.redis_clone.Storage.Eviction.EvictionManager;
 import com.example.hbhagat.redis_clone.Storage.Eviction.SimpleFirstEvictionPolicy;
+import com.example.hbhagat.redis_clone.Storage.Expiration.ExpirationManager;
 import com.example.hbhagat.redis_clone.Storage.Mutation.MutationCoordinator;
 import com.example.hbhagat.redis_clone.Storage.Persistence.AofLoader;
 import com.example.hbhagat.redis_clone.Storage.Persistence.AppendOnlyFileManager;
 import com.example.hbhagat.redis_clone.Storage.Statistics.RedisKeyspaceStatistics;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.function.Consumer;
 
 /**
  * Wires the server by hand, the same way Spring does, so tests
@@ -47,19 +49,28 @@ public final class TestRedis implements AutoCloseable {
 
 	public final MutationCoordinator mutations;
 
+	public final ExpirationManager expiration;
+
 	public final AsyncRedisServer server;
 
-	public TestRedis(Path aofFile, int keysLimit, String evictionStrategy) throws Exception {
+	/**
+	 * Starts a server on a free port. The customizer can change
+	 * any property before startup.
+	 */
+	public TestRedis(Path aofFile, Consumer<RedisProperties> customizer) throws Exception {
 		properties = new RedisProperties();
 		properties.setHost("127.0.0.1");
 		properties.setPort(0);
-		properties.setKeysLimit(keysLimit);
-		properties.setEvictionStrategy(evictionStrategy);
+		properties.setKeysLimit(10_000);
+		properties.setEvictionStrategy("allkeys-lru");
 		properties.setAofFile(aofFile.toString());
+
+		customizer.accept(properties);
 
 		store = new RedisStore();
 		aof = new AppendOnlyFileManager(properties, store);
 		mutations = new MutationCoordinator(aof);
+		expiration = new ExpirationManager(store, mutations);
 
 		EvictionManager eviction = new EvictionManager(
 			properties,
@@ -86,7 +97,7 @@ public final class TestRedis implements AutoCloseable {
 
 		CommandDispatcher dispatcher = new CommandDispatcher(handlers);
 
-		server = new AsyncRedisServer(properties, dispatcher, new ServerLifecycle(), new AofLoader(properties, aof, dispatcher));
+		server = new AsyncRedisServer(properties, dispatcher, new ServerLifecycle(), new AofLoader(properties, aof, dispatcher), mutations);
 
 		server.run();
 
@@ -102,7 +113,7 @@ public final class TestRedis implements AutoCloseable {
 	}
 
 	public TestRedis(Path aofFile) throws Exception {
-		this(aofFile, 10_000, "allkeys-lru");
+		this(aofFile, properties -> {});
 	}
 
 	public int port() {

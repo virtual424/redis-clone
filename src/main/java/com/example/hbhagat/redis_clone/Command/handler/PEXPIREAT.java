@@ -77,7 +77,7 @@ public final class PEXPIREAT implements CommandHandler {
 				return Mutation.empty();
 			}
 
-			object.setExpiration(expiresAt);
+			store.setExpiration(key, object, expiresAt);
 
 			result[0] = 1;
 
