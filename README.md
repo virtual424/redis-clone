@@ -6,8 +6,6 @@ A Redis-compatible in-memory key-value server written in Java 21. It speaks the 
 
 It covers the parts of Redis that matter in backend interviews and production: a single-threaded event loop, protocol framing, expiry, eviction, persistence and transactions.
 
-> **Credit:** built while following [Arpit Bhayani's Redis internals course](https://arpitbhayani.me), which builds a Redis-compatible server in Go. This is a Java 21 rewrite. The section [Beyond the course](#beyond-the-course) lists what was added on top.
-
 ## Features
 
 | Area | What it does |
@@ -88,7 +86,7 @@ sequenceDiagram
     A->>A: under lock: snapshot keys, start buffering new writes
     A->>W: write snapshot
     W->>F: appendonly.aof.rewrite (SET + PEXPIREAT per key)
-    Note over EL,A: clients keep writing; each write goes to the old AOF and to the buffer
+    Note over EL,A: clients keep writing, and each write goes to both the old AOF and the buffer
     W->>A: lock (short)
     A->>F: append buffered writes to the new file
     A->>F: atomic rename over appendonly.aof
@@ -196,17 +194,6 @@ redis-benchmark -p 6369 -t set,get -n 100000 -P 16 -q   # pipelining
 ```
 
 Raise `redis.keys-limit` first, or every `SET` triggers eviction.
-
-## Beyond the course
-
-Added on top of the course design:
-
-- **AOF loading at startup.** Replays through the normal command handlers, without appending again, and truncates a half-written last command after a crash.
-- **Absolute expiry in the AOF** (`PEXPIREAT`), so TTLs do not restart on replay.
-- **TCP framing.** A per-client query buffer, so commands split across reads, pipelining and large values work.
-- **Active expiry like Redis's `activeExpireCycle`**, with O(1) random sampling.
-- **Atomic `EXEC`** with respect to background expiry.
-- **`max-clients` limit**, SLF4J logging, tests over real sockets, GitHub Actions CI, Dockerfile.
 
 ## Known limitations
 
