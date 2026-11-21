@@ -3,11 +3,10 @@ package com.example.hbhagat.redis_clone;
 import com.example.hbhagat.redis_clone.Server.ServerShutdownManager;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-@SpringBootApplication(exclude = { DataSourceAutoConfiguration.class })
+@SpringBootApplication
 @EnableScheduling
 public class RedisCloneApplication {
 
