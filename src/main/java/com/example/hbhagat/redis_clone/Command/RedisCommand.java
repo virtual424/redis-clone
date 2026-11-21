@@ -104,6 +104,11 @@ public final class RedisCommand {
 		return result;
 	}
 
+	@Override
+	public String toString() {
+		return name + " " + String.join(" ", argumentsUtf8());
+	}
+
 	public static RedisCommand ofMixed(String name, Object... arguments) {
 		List<RespBulkString> bulkStrings = new ArrayList<>(arguments.length);
 

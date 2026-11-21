@@ -22,6 +22,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.jspecify.annotations.NonNull;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
@@ -29,6 +31,8 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public final class AsyncRedisServer implements CommandLineRunner {
+
+	private static final Logger log = LoggerFactory.getLogger(AsyncRedisServer.class);
 
 	private final RedisProperties redisProperties;
 
@@ -77,9 +81,7 @@ public final class AsyncRedisServer implements CommandLineRunner {
 			started = true;
 		}
 
-		System.out.println(
-			"Starting asynchronous TCP server on " + redisProperties.getHost() + ":" + redisProperties.getPort()
-		);
+		log.info("Starting asynchronous TCP server on {}:{}", redisProperties.getHost(), redisProperties.getPort());
 
 		/*
 		 * Rebuild the keyspace from the AOF before accepting
@@ -108,7 +110,7 @@ public final class AsyncRedisServer implements CommandLineRunner {
 			 */
 			server.register(openedSelector, SelectionKey.OP_ACCEPT);
 
-			System.out.println("Server started");
+			log.info("Server listening on port {}", boundPort);
 
 			eventLoop(server, openedSelector);
 		} finally {
@@ -152,7 +154,7 @@ public final class AsyncRedisServer implements CommandLineRunner {
 					break;
 				}
 
-				System.err.println("Selector failure: " + e.getMessage());
+				log.error("Selector failure", e);
 
 				break;
 			}
@@ -228,7 +230,7 @@ public final class AsyncRedisServer implements CommandLineRunner {
 			} catch (IOException e) {
 				closeClientQuietly(key);
 			} catch (Exception e) {
-				System.err.println("Error processing client event: " + e.getMessage());
+				log.warn("Closing client after error: {}", e.getMessage());
 
 				closeClientQuietly(key);
 			}
@@ -278,7 +280,7 @@ public final class AsyncRedisServer implements CommandLineRunner {
 
 		client.register(selector, SelectionKey.OP_READ);
 
-		System.out.println("Client connected " + client.getRemoteAddress() + " clients=" + clients.size());
+		log.debug("Client connected {} clients={}", client.getRemoteAddress(), clients.size());
 	}
 
 	/**
@@ -307,7 +309,13 @@ public final class AsyncRedisServer implements CommandLineRunner {
 				continue;
 			}
 
-			System.out.println("Executing : " + command);
+			/*
+			 * Per-command logging is debug only: printing every
+			 * command to the console costs more than executing it.
+			 */
+			if (log.isDebugEnabled()) {
+				log.debug("Executing {}", command);
+			}
 
 			byte[] response;
 
@@ -360,7 +368,7 @@ public final class AsyncRedisServer implements CommandLineRunner {
 			channel.close();
 		}
 
-		System.out.println("Client disconnected clients=" + clients.size());
+		log.debug("Client disconnected clients={}", clients.size());
 	}
 
 	/**
@@ -448,7 +456,7 @@ public final class AsyncRedisServer implements CommandLineRunner {
 				executor.shutdownNow();
 
 				if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-					System.err.println("Redis event loop did not terminate cleanly");
+					log.warn("Redis event loop did not terminate cleanly");
 				}
 			}
 		} catch (InterruptedException e) {
@@ -465,7 +473,7 @@ public final class AsyncRedisServer implements CommandLineRunner {
 				start();
 			} catch (IOException e) {
 				if (!lifecycle.isShuttingDown()) {
-					System.err.println("Redis server failed to start: " + e.getMessage());
+					log.error("Redis server failed to start", e);
 				}
 			}
 		});

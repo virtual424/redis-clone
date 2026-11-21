@@ -2,10 +2,14 @@ package com.example.hbhagat.redis_clone.Server;
 
 import com.example.hbhagat.redis_clone.Storage.Persistence.AppendOnlyFileManager;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 @Component
 public final class ServerShutdownManager {
+
+	private static final Logger log = LoggerFactory.getLogger(ServerShutdownManager.class);
 
 	private final ServerLifecycle lifecycle;
 
@@ -41,7 +45,7 @@ public final class ServerShutdownManager {
 			return;
 		}
 
-		System.out.println("Redis server shutdown initiated");
+		log.info("Redis server shutdown initiated");
 
 		try {
 			/*
@@ -64,9 +68,9 @@ public final class ServerShutdownManager {
 			 */
 			aofManager.shutdown();
 
-			System.out.println("Redis server shutdown completed");
+			log.info("Redis server shutdown completed");
 		} catch (Exception e) {
-			System.err.println("Error during Redis server shutdown: " + e.getMessage());
+			log.error("Error during Redis server shutdown", e);
 
 			/*
 			 * Make sure the lifecycle cannot remain in
